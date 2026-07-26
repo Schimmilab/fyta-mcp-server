@@ -581,3 +581,8 @@ GitHub: https://github.com/schimmmi/fyta-mcp-server
 ---
 
 Happy plant monitoring with Claude! 🌿🤖
+
+## Maintainer
+
+Schimmi — https://schimmilab.de
+Issues und Pull Requests willkommen.
