@@ -213,7 +213,11 @@ def evaluate_plant_status(plant: Dict, measurements_data: Optional[Dict] = None,
         }
 
     # Evaluate nutrients (salinity/soil_fertility)
-    nutrients = plant.get("salinity") or plant.get("soil_fertility")
+    # CRITICAL: Handle 0 explicitly as a valid value!
+    if plant.get("salinity") is not None:
+        nutrients = plant.get("salinity")
+    else:
+        nutrients = plant.get("soil_fertility")
     nutrients_anomaly = plant.get("soil_fertility_anomaly", False)
 
     if nutrients is not None:
@@ -248,42 +252,24 @@ def evaluate_plant_status(plant: Dict, measurements_data: Optional[Dict] = None,
             thresholds.get("salinity_max_acceptable")
         )
 
-        # Smart anomaly detection: Only treat as sensor error if EC suddenly dropped to 0
-        # Gradual decline to 0 = real nutrient depletion (needs fertilization)
-        # Sudden drop from >0.3 to 0 = sensor issue (poor contact or malfunction)
-        if nutrients_anomaly and nutrients == 0:
-            # FYTA reports anomaly at EC=0 - check if it's real depletion or sensor issue
-            is_sensor_error = False
 
-            if ec_trend and ec_trend.get("analyzed"):
-                trend = ec_trend.get("trend")
-                initial_ec = ec_trend.get("initial_ec", 0)
-
-                # Sudden drop: EC was > 0.3 within last 30 days and is now suddenly 0
-                # (not a gradual decreasing trend)
-                if initial_ec > 0.3 and trend != "decreasing":
-                    is_sensor_error = True
-                    logger.warning(f"Sensor anomaly detected: sudden drop from {initial_ec} to 0 (trend: {trend})")
-                else:
-                    # Gradual decline to 0 = real nutrient depletion
-                    logger.info(f"EC=0 is real nutrient depletion (trend: {trend}, initial: {initial_ec})")
-            else:
-                # No trend data available - treat conservatively as sensor error
-                # (better to check sensor than over-fertilize based on bad reading)
-                is_sensor_error = True
-                logger.warning(f"Insufficient data for anomaly detection, treating EC=0 as potential sensor issue")
-
-            if is_sensor_error:
-                status_code = 4  # Critical - sensor issue
-                status_name = "sensor_error"
-        elif nutrients_anomaly and nutrients != 0:
+        # Smart anomaly detection for nutrients
+        # CRITICAL: EC=0 is ALWAYS nutrient depletion, never a sensor error!
+        # Only treat non-zero EC values with anomaly flag as sensor errors
+        if nutrients_anomaly and nutrients != 0:
             # Real sensor anomaly detected (malfunction while measuring non-zero value)
             logger.warning(f"Nutrients sensor anomaly detected for plant {plant.get('id')}: value={nutrients}, treating as unreliable")
             status_code = 4  # Critical - sensor issue
             status_name = "sensor_error"
-        elif nutrients == 0 and not nutrients_anomaly:
-            # EC=0 without anomaly flag = valid measurement (no nutrients)
-            logger.info(f"Nutrients EC=0 for plant {plant.get('id')} - no nutrients present (fertilization needed)")
+        elif nutrients == 0:
+            # EC=0 is ALWAYS nutrient depletion, regardless of anomaly flag
+            # Ignore FYTA's anomaly flag for EC=0 - it's misleading
+            if nutrients_anomaly:
+                logger.info(f"FYTA reports anomaly at EC=0, but EC=0 is always nutrient depletion, not sensor error")
+            else:
+                logger.info(f"Nutrients EC=0 for plant {plant.get('id')} - no nutrients present (fertilization needed)")
+            # Don't override status_code/status_name - let normal evaluation treat it as critically low
+
 
         logger.info(f"Nutrients evaluation: value={nutrients}, min_good={min_good}, max_good={max_good}, result={status_code} ({status_name}), adjusted={min_good != thresholds.get('salinity_min_good', 0)}, anomaly={nutrients_anomaly}")
 

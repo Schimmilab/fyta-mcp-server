@@ -1393,30 +1393,23 @@ async def handle_diagnose_plant(fyta_client: FytaClient, arguments: Any) -> list
                     ec_trend = analyze_ec_trend(measurements_list, days=30)
                     logger.info(f"EC trend analyzed: {ec_trend.get('analyzed', False)}")
 
+
                 # Smart sensor anomaly detection
-                # Only treat as anomaly if EC suddenly dropped to 0 (sensor issue)
-                # If EC gradually declined to 0, it's real nutrient depletion
+                # CRITICAL: EC=0 is ALWAYS nutrient depletion, never a sensor error!
+                # Only treat non-zero EC values with anomaly flag as sensor errors
                 latest = get_latest_measurement(measurements_list)
                 fyta_anomaly = latest.get("soil_fertility_anomaly", False) if latest else False
 
                 sensor_anomaly = False
-                if fyta_anomaly and current_ec == 0:
-                    # Check if this is a sudden drop (sensor issue) or gradual decline (real depletion)
-                    if ec_trend.get("analyzed"):
-                        trend = ec_trend.get("trend")
-                        initial_ec = ec_trend.get("initial_ec", 0)
+                if fyta_anomaly and current_ec != 0:
+                    # Only treat as sensor anomaly if EC is NOT zero
+                    # EC=0 is always nutrient depletion, not sensor error
+                    sensor_anomaly = True
+                    logger.warning(f"Nutrient sensor anomaly detected at EC={current_ec}")
+                elif fyta_anomaly and current_ec == 0:
+                    # FYTA reports anomaly at EC=0, but this is nutrient depletion
+                    logger.info(f"FYTA reports anomaly at EC=0, but EC=0 is always nutrient depletion, not sensor error")
 
-                        # Sudden drop: EC was > 0.3 within last 30 days and now suddenly 0
-                        if initial_ec > 0.3 and trend != "decreasing":
-                            sensor_anomaly = True
-                            logger.warning(f"Sensor anomaly detected: sudden drop from {initial_ec} to 0")
-                        else:
-                            # Gradual decline to 0 = real nutrient depletion, not sensor error
-                            logger.info(f"EC=0 is real nutrient depletion (trend: {trend}, initial: {initial_ec})")
-                    else:
-                        # No trend data - trust FYTA for now but log it
-                        sensor_anomaly = fyta_anomaly
-                        logger.warning(f"Insufficient data for anomaly detection, using FYTA flag: {fyta_anomaly}")
 
                 # Get care history for fertilization frequency
                 care_history = care_store.get_plant_history(plant_id, days=90, action_type="fertilizing")
